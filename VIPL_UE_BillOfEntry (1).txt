@@ -1,0 +1,297 @@
+/**
+ * @NApiVersion 2.x
+ * @NScriptType UserEventScript
+ * @NModuleScope SameAccount
+ */
+
+/*************************************************************
+ * File Header
+ * Script Type: User Event Script
+ * Script Name: VIPL_UE_BillOfEntry
+ * File Name  : VIPL_UE_BillOfEntry.js
+ * Created On : 25/10/2021
+ * Modified On:
+ * Created By : Shivani(Yantra Inc.)
+ * Modified By: 
+ * Description: 
+ ************************************************************/
+define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/redirect', 'N/render', 'N/url', 'N/https', 'N/task', 'N/format', 'N/runtime', 'N/file', 'N/email'],
+    function(serverWidget, record, search, redirect, render, url, https, task, format, runtime, file, email) {
+
+ function afterSubmit(context) {
+            //===========add you after submit logic here ======
+			var script_runitme = runtime.getCurrentScript();
+			
+	
+if (runtime.executionContext == runtime.ContextType.USER_INTERFACE && context.type == 'create'||runtime.executionContext=='SUITELET'){
+	try{
+	log.debug("context.type in",context.type);	
+					var rec = context.newRecord;
+					var recType = rec.getValue('type');
+					var recId = rec.getValue('id');
+					log.debug("recId",recId);
+					var frgt = rec.getValue("custrecord_landed_frieght");	
+					var frgt_assesable =rec.getValue("custrecord_vipl_freight");
+					var misc_assesable =rec.getValue("custrecord_vipl_misc_charge");
+					var clearingcharges = rec.getValue("custrecord_clearing_charges");
+					var otherexpenses =rec.getValue("custrecord_other_expenses");
+					
+					
+					var child_record = rec.getLineCount("recmachcustrecord2");				
+					var customduty = 0;
+					var wlfare_charges=0;
+					var igst=0;
+					for (var c = 0; c < child_record; c++) { 
+						 customduty   = rec.getSublistValue('recmachcustrecord2', 'custrecord_vipl_basic_custom_duty', c);
+						log.debug("customduty",customduty);
+						
+						 wlfare_charges = rec.getSublistValue('recmachcustrecord2',"custrecord_vipl_social_welfare_surcharge",c);
+						log.debug("wlfare_charges",wlfare_charges);
+						
+						 igst = rec.getSublistValue('recmachcustrecord2',"custrecord_vipl_igst",c);
+						log.debug("igst",igst);
+						
+						var IR_tran_number = rec.getSublistValue('recmachcustrecord2',"custrecord_vipl_transaction_number",c);
+						log.debug("IR_tran_number",IR_tran_number);
+					}														
+					
+					var item_receipt_rec = record.load({
+						type:"itemreceipt",
+						id:IR_tran_number,
+						//isDynamic: true
+					});
+					var exch_rate = item_receipt_rec.getValue("exchangerate");
+					var amount_check = item_receipt_rec.getValue("custbody_total_amount");
+					var item_count = item_receipt_rec.getLineCount("item");
+					log.debug("item_count",item_count);
+					for (var itemTable = 0; itemTable < item_count; itemTable++) { 
+								var item_name   = item_receipt_rec.getSublistValue('item', 'item', itemTable);
+								log.debug("item_name",item_name);
+								var fieldLookUp = search.lookupFields({
+									type: "item",
+									id: item_name,
+									columns: ['custitem_vipl_custom_duty', 'custitem_vipl_totalwelfarecharger', 'custitem_vipl_igstlandedcost']
+								});
+								log.debug("fieldLookUp",JSON.stringify(fieldLookUp));
+								var igst_percentage = fieldLookUp.custitem_vipl_igstlandedcost;	
+								igst_percentage= igst_percentage.split("%")[0];
+								log.debug("igst_percentage",igst_percentage);
+								
+								var item_qty   = item_receipt_rec.getSublistValue('item', 'itemquantity', itemTable);
+								log.debug("item_qty",item_qty);
+								var item_rate   = item_receipt_rec.getSublistValue('item', 'rate', itemTable);
+								log.debug("item_rate",item_rate);
+								
+								var amount = item_qty*item_rate;
+								//log.debug("amount",amount);
+								
+								var amt_exch = amount * exch_rate;
+								log.debug("amt_exch",amt_exch);
+								
+								var frieght_split = frgt * amount;
+								var frieght_spliting =frieght_split/amount_check;
+								//log.debug("final frieght_spliting",frieght_spliting);
+								
+								var misc_split = clearingcharges * amount;
+								var clearcharges_spliting =misc_split/amount_check;
+								//log.debug("final clearcharges_spliting",clearcharges_spliting);
+								
+								var exch_split = otherexpenses * amount;
+								var otherexpenses_spliting =exch_split/amount_check;
+								//log.debug("final otherexpenses_spliting",otherexpenses_spliting);
+								var final_otherexpese =otherexpenses_spliting *exch_rate;
+								//log.debug("final_otherexpese",final_otherexpese);
+                      
+								var customduty_split = customduty * amount;
+								var customduty_spliting =customduty_split/amount_check;
+								//log.debug("final customduty_spliting",customduty_spliting);
+								
+								var wlfare_charges_split = wlfare_charges * amount;
+								var wlfare_charges_spliting =wlfare_charges_split/amount_check;
+								//log.debug("final wlfare_charges_spliting",wlfare_charges_spliting);
+								
+								//for IGST calculations
+								
+								var frgt_igst = amount * frgt_assesable;
+								var igst_frgt_amount = frgt_igst /amount_check;
+								log.debug("igst_frgt_amount",igst_frgt_amount);
+								
+								var misc_igst = amount*misc_assesable;
+								var igst_misc_amount = misc_igst / amount_check;
+								log.debug("igst_misc_amount",igst_misc_amount);
+								
+								var insurance_igst = parseFloat(amount)+parseFloat(igst_misc_amount);
+								var final_insurance = (insurance_igst/100)*1.125;
+								log.debug("final_insurance",final_insurance);
+								
+								var igst_assesablevalue = parseFloat(amount)+parseFloat(igst_frgt_amount)+parseFloat(igst_misc_amount)+parseFloat(final_insurance);
+								var final_assesablevalue = igst_assesablevalue * exch_rate;
+								log.debug("final_assesablevalue",final_assesablevalue);
+								
+								var igst_total = parseFloat(final_assesablevalue)+parseFloat(customduty_spliting)+parseFloat(wlfare_charges_spliting);
+								var igst_amount = (igst_total / 100)*igst_percentage;
+								log.debug("igst_amount",igst_amount);
+															
+								var total_landedcost = parseFloat(amt_exch)+parseFloat(customduty_spliting)+parseFloat(wlfare_charges_spliting)+parseFloat(final_otherexpese)+parseFloat(frieght_spliting)+parseFloat(clearcharges_spliting);
+								//log.debug("total_landedcost",total_landedcost);
+								var final_cost = total_landedcost/item_qty;
+								log.debug("final_cost",final_cost);
+								item_receipt_rec.setSublistValue("item","custcol_vipl_total_cost_in_local_curr",itemTable,total_landedcost.toFixed(2));
+								item_receipt_rec.setSublistValue("item","custcol_vipl_landed_rate",itemTable,final_cost.toFixed(2));
+								item_receipt_rec.setSublistValue("item","custcol_vipl_igst_amt",itemTable,igst_amount.toFixed(2));
+								//item_receipt_rec.setSublistValue("item","",itemTable,igst);
+								var subrec = item_receipt_rec.getSublistSubrecord({
+									sublistId: 'item',									
+									fieldId: 'landedcost',
+									line: itemTable,
+								});
+
+								// Insert a line in the subrecord's custom duty.
+								if(customduty_spliting){
+									log.debug("final customduty_spliting",customduty_spliting);
+                      			subrec.insertLine({
+									sublistId: 'landedcostdata',
+									line: 0
+								});
+
+								subrec.setSublistValue({
+									sublistId: 'landedcostdata',
+									fieldId: 'costcategory',
+									line: 0,
+									value: 1
+								});
+								subrec.setSublistValue({
+									sublistId: 'landedcostdata',
+									fieldId: 'amount',
+									line: 0,
+									value: customduty_spliting
+								});
+                                }
+								   
+								// Insert a line in the subrecord's welfare charges.
+								if(wlfare_charges_spliting){
+									log.debug("final wlfare_charges_spliting",wlfare_charges_spliting);
+                      			subrec.insertLine({
+									sublistId: 'landedcostdata',
+									line: 1
+								});
+
+								subrec.setSublistValue({
+									sublistId: 'landedcostdata',
+									fieldId: 'costcategory',
+									line: 1,
+									value: 5
+								});
+								subrec.setSublistValue({
+									sublistId: 'landedcostdata',
+									fieldId: 'amount',
+									line: 1,
+									value: wlfare_charges_spliting
+								});
+                                }
+								   
+								// Insert a line in the subrecord's IGST.
+								if(igst){
+								subrec.insertLine({
+									sublistId: 'landedcostdata',
+									line: 2
+								});
+
+								subrec.setSublistValue({
+									sublistId: 'landedcostdata',
+									fieldId: 'costcategory',
+									line: 2,
+									value: 7 //igst
+								});
+								subrec.setSublistValue({
+									sublistId: 'landedcostdata',
+									fieldId: 'amount',
+									line: 2,
+									value: igst
+								});
+                                }                      								
+								   
+								// Insert a line in the subrecord's frgt.
+								if(frieght_spliting){
+									log.debug("frieght_spliting",frieght_spliting);
+								subrec.insertLine({
+									sublistId: 'landedcostdata',
+									line: 3
+								});
+
+								subrec.setSublistValue({
+									sublistId: 'landedcostdata',
+									fieldId: 'costcategory',
+									line: 3,
+									value: 6
+								});
+								subrec.setSublistValue({
+									sublistId: 'landedcostdata',
+									fieldId: 'amount',
+									line: 3,
+									value: frieght_spliting
+								});
+                                }
+								   
+								// Insert a line in the subrecord's clearing.
+								if(clearcharges_spliting){
+									log.debug("clearcharges_spliting",clearcharges_spliting);
+								subrec.insertLine({
+									sublistId: 'landedcostdata',
+									line: 4
+								});
+
+								subrec.setSublistValue({
+									sublistId: 'landedcostdata',
+									fieldId: 'costcategory',
+									line: 4,
+									value: 2
+								});
+								subrec.setSublistValue({
+									sublistId: 'landedcostdata',
+									fieldId: 'amount',
+									line: 4,
+									value: clearcharges_spliting
+								});
+                                }
+								
+								// Insert a line in the subrecord's otherexpenses.
+								if(final_otherexpese){
+									log.debug("final_otherexpese",final_otherexpese);
+								subrec.insertLine({
+									sublistId: 'landedcostdata',
+									line: 5
+								});
+
+								subrec.setSublistValue({
+									sublistId: 'landedcostdata',
+									fieldId: 'costcategory',
+									line: 5,
+									value: 3
+								});
+								subrec.setSublistValue({
+									sublistId: 'landedcostdata',
+									fieldId: 'amount',
+									line: 5,
+									//value:otherexpenses_spliting
+									value:final_otherexpese
+								});
+                                }
+								/* item_receipt_rec.commitLine({
+									sublistId: 'item'
+								}); */
+								log.debug("value set");   								
+					}					
+					item_receipt_rec.save();
+								
+			} catch (ex) {
+				log.debug("Error", ex);
+			}	
+}
+		   }		   		   
+		
+	return {
+		afterSubmit: afterSubmit,
+	};
+
+});
